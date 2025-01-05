@@ -132,6 +132,18 @@ describe("FiduciaryDuty", () => {
         });
     });
 
+    describe("Additional Initialization Tests", () => {
+        it("Should initialize with correct raised amount", async () => {
+            const { fiduciaryDuty } = await loadFixture(deployFixture);
+            expect(await fiduciaryDuty.raised()).to.equal(0n);
+        });
+
+        it("Should initialize with correct decimal value", async () => {
+            const { fiduciaryDuty } = await loadFixture(deployFixture);
+            expect(await fiduciaryDuty.decimals()).to.equal(0n);
+        });
+    });
+
     describe("Payment Functions", () => {
         it("Should not allow payment without whitelist", async () => {
             const { fiduciaryDuty, user1, mockUSDC } = await loadFixture(deployFixture);
@@ -948,6 +960,41 @@ describe("FiduciaryDuty", () => {
             await expect(fiduciaryDuty.cancelRaise())
                 .to.emit(fiduciaryDuty, "RaiseEnded")
                 .withArgs(true);
+        });
+    });
+
+    describe("Forwarder Tests", () => {
+        it("Should initialize with correct forwarder", async () => {
+            const { fiduciaryDuty, forwarder } = await loadFixture(deployFixture);
+            expect(await fiduciaryDuty.trustedForwarder()).to.equal(await forwarder.getAddress());
+        });
+
+        it("Should correctly identify trusted forwarder", async () => {
+            const { fiduciaryDuty, forwarder } = await loadFixture(deployFixture);
+            expect(await fiduciaryDuty.isTrustedForwarder(await forwarder.getAddress())).to.be.true;
+        });
+    });
+
+    describe("Event Tests", () => {
+        it("Should emit PaymentAdded event", async () => {
+            const { fiduciaryDuty, user1, whitelist, mockUSDC } = await loadFixture(deployFixture);
+            await whitelist.addAddress(user1.address);
+            await mockUSDC.mint(user1.address, 100000000n);
+
+            const auth = await createAuthorization(
+                user1.address,
+                await fiduciaryDuty.getAddress(),
+                10000000n,
+                0n,
+                2n ** 48n - 1n,
+                "nonce_event",
+                user1,
+                mockUSDC
+            );
+
+            await expect(fiduciaryDuty.connect(user1).addForPayment(auth, user1.address))
+                .to.emit(fiduciaryDuty, "PaymentReceived")
+                .withArgs(user1.address, 10000000n, 1n);
         });
     });
 }); 
