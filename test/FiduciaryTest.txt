@@ -1,0 +1,1230 @@
+import {ethers} from "hardhat";
+import {smock} from '@defi-wonderland/smock';
+import {ForwarderMock, IERC3009Partial} from "../../typechain-types";
+import {loadFixture} from "@nomicfoundation/hardhat-network-helpers";
+import {expect, use} from "chai";
+import {BigNumber} from "ethers";
+
+use(smock.matchers);
+
+describe("Fiduciary", () => {
+
+
+    const createPermissionStructure = (
+        from: string,
+        to: string,
+        value: BigNumber,
+        validAfter: BigNumber,
+        validBefore: BigNumber,
+        nonce: string,
+        v: BigNumber,
+        r: string,
+        s: string
+    ) => {
+        /*const encoder = ethers.utils.defaultAbiCoder;
+        return encoder.encode([
+            "address",
+            "address",
+            "uint",
+            "uint",
+            "uint",
+            "bytes",
+            "uint8",
+            "bytes",
+            "bytes",], [from, to, value, validAfter, validBefore, nonce, v, r, s])*/
+        return {
+            from,
+            to,
+            value,
+            validAfter,
+            validBefore,
+            nonce,
+            v,
+            r,
+            s
+        }
+    }
+
+    const deployFiduciaryDuty = async () => {
+
+        // Contracts are deployed using the first signer/account by default
+        const [deployer, otherAccount, manager] = await ethers.getSigners();
+
+        const fakeUSDC = await smock.fake<IERC3009Partial>("IERC3009Partial");
+        fakeUSDC.decimals
+            .returns(6);
+
+
+        const forwarder = await smock.fake<ForwarderMock>("ForwarderMock")
+
+        const FiduciaryDutyContract = await ethers.getContractFactory("FiduciaryDuty");
+        const WhiteListContract = await ethers.getContractFactory("WhiteList");
+
+        const whiteList = await WhiteListContract.connect(deployer).deploy();
+        await whiteList.addAddress(deployer.address);
+
+
+        const totalSupply = 1000;
+        const minimalPoint = 80;
+        const fiduciaryDuty = await FiduciaryDutyContract
+            .connect(deployer)
+            .deploy(
+                fakeUSDC.address,
+                "FiduciarioTest",
+                "FDS",
+                totalSupply,
+                manager.address,
+                whiteList.address,
+                forwarder.address,
+                minimalPoint,
+                10
+            )
+
+        await whiteList.grantRole(await whiteList.READER_ROLE(), fiduciaryDuty.address);
+
+        return {
+            fiduciaryDuty,
+            deployer,
+            otherAccount,
+            whiteList,
+            forwarder,
+            fakeUSDC,
+            manager,
+            totalSupply,
+            minimalPoint
+        };
+    }
+
+    beforeEach(async () => {
+        const {
+            fakeUSDC,
+        } = await loadFixture(deployFiduciaryDuty);
+        fakeUSDC.balanceOf.reset();
+        fakeUSDC.transfer.reset();
+        fakeUSDC.balanceOf.reset();
+        fakeUSDC.decimals.reset();
+        fakeUSDC.transferWithAuthorization
+            .reset();
+        fakeUSDC.decimals
+            .returns(6);
+    })
+
+    describe("Test initializations", () => {
+        it("viable point", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const viablePoint = await fiduciaryDuty.viablePoint();
+            expect(viablePoint).to.equal(false);
+        })
+
+        it("decimals", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const decimals = await fiduciaryDuty.decimals();
+            expect(decimals).to.equal(0);
+        })
+
+        it("to raise", async () => {
+            const {
+                fiduciaryDuty,
+                totalSupply
+            } = await loadFixture(deployFiduciaryDuty);
+            const toRaise = await fiduciaryDuty.toRaise();
+            expect(toRaise).to.equal(totalSupply * 10);
+        })
+
+        it("raised", async () => {
+            const {
+                fiduciaryDuty,
+                totalSupply
+            } = await loadFixture(deployFiduciaryDuty);
+            const raised = await fiduciaryDuty.raised();
+            expect(raised).to.equal(0);
+        })
+
+        it("forwarder", async () => {
+            const {
+                fiduciaryDuty,
+                forwarder,
+            } = await loadFixture(deployFiduciaryDuty);
+            const forwarderInitAddress = await fiduciaryDuty.forwarder();
+            expect(forwarder.address).to.equal(forwarderInitAddress);
+        })
+
+        it("whitelist", async () => {
+            const {
+                fiduciaryDuty,
+                whiteList,
+            } = await loadFixture(deployFiduciaryDuty);
+            const whiteListContractAddress = await fiduciaryDuty.whiteListContract();
+            expect(whiteList.address).to.equal(whiteListContractAddress);
+        })
+
+        it("raise token", async () => {
+            const {
+                fiduciaryDuty,
+                fakeUSDC,
+            } = await loadFixture(deployFiduciaryDuty);
+            const fakeUSDCContract = await fiduciaryDuty.tokenStorage();
+            expect(fakeUSDC.address).to.equal(fakeUSDCContract);
+        })
+
+        it("manager address", async () => {
+            const {
+                fiduciaryDuty,
+                manager,
+            } = await loadFixture(deployFiduciaryDuty);
+            const managerAddress = await fiduciaryDuty.managerAddress();
+            expect(manager.address).to.equal(managerAddress);
+        })
+
+        it("correct supply and contract as owner", async () => {
+            const {
+                fiduciaryDuty,
+                totalSupply,
+            } = await loadFixture(deployFiduciaryDuty);
+            const totalSupplyContract = await fiduciaryDuty.totalSupply();
+            const balanceContract = await fiduciaryDuty.balanceOf(fiduciaryDuty.address);
+            expect(totalSupply).to.equal(totalSupplyContract, "Supply should be the same as init");
+            expect(totalSupplyContract).to.equal(balanceContract, "Contract should have all supply");
+        })
+
+        it("correct supply and contract as owner", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const sold = await fiduciaryDuty.sold();
+            expect(sold).to.equal(0, "We shouldn't sold anything at the beginning");
+        })
+
+        it("sold", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const sold = await fiduciaryDuty.sold();
+            expect(sold).to.equal(0, "We shouldn't sold anything at the beginning");
+        })
+
+        it("canceledRaise", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const canceledRaise = await fiduciaryDuty.canceledRaise();
+            expect(canceledRaise).to.equal(false, "Canceled raise should be false at the beginning");
+        })
+
+        it("canceledRaise", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const canceledRaise = await fiduciaryDuty.canceledRaise();
+            expect(canceledRaise).to.equal(false, "Canceled raise should be false at the beginning");
+        })
+
+        it("minimal", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            const minimal = await fiduciaryDuty.minimal();
+            expect(minimal).to.greaterThan(0, "The minimal raise should be greater than 0");
+        })
+
+    })
+
+    describe("test fiduciary duty", () => {
+        it("shouldn't allow withdrawals without funds", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            await expect(fiduciaryDuty.withdrawPayment())
+                .to
+                .be
+                .revertedWith("Your balance should be greater than 0 for refund")
+        })
+
+        it("should give you the tokens for the payment", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            expect(await fiduciaryDuty.sold()).to.equal(0);
+
+            fakeUSDC
+                .balanceOf
+                .whenCalledWith(otherAccount.address)
+                .returns("100000000");
+
+            const permissionValue = BigNumber.from("10000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address)
+
+            await expect(fakeUSDC.transferWithAuthorization).to.have.been.calledWith(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s
+            )
+
+            expect(await fiduciaryDuty.viablePoint()).to.equal(false);
+            expect(await fiduciaryDuty.balanceOf(otherAccount.address))
+                .to
+                .be
+                .equal(1);
+
+            expect(await fiduciaryDuty.sold()).to.equal(1);
+            expect(await fiduciaryDuty.balanceOf(fiduciaryDuty.address)).to.equal(999);
+            expect(await fiduciaryDuty.balanceOf(otherAccount.address)).to.equal(1);
+        })
+
+
+        it("should emit PaymentAdded ", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            expect(await fiduciaryDuty.sold()).to.equal(0);
+
+            fakeUSDC
+                .balanceOf
+                .whenCalledWith(otherAccount.address)
+                .returns("100000000");
+
+            const permissionValue = BigNumber.from("10000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .emit(fiduciaryDuty, "PaymentAdded")
+                .withArgs(otherAccount.address, 1)
+        })
+        it("after canceled raise I should not be able to add more payments ", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            expect(await fiduciaryDuty.canceledRaise()).to.equal(false)
+            await fiduciaryDuty.cancelRaise();
+
+            const permissionValue = BigNumber.from("10000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("The raise was canceled. No more payments allowed")
+            expect(await fiduciaryDuty.canceledRaise()).to.equal(true);
+        })
+
+        it("payment should be greater than 0", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            const permissionValue = BigNumber.from("0");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("Value should be greater than 0")
+        })
+
+        it("permissions should be given to fiduciary contract", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(10000000000000);
+
+            const permissionValue = BigNumber.from("100000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                otherAccount.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("You should transfer to the escrow contract")
+        })
+
+        it("should be divisible by 10 dollars", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(10000000000000)
+
+            const permissionValue = BigNumber.from("123000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("Should be divisible by unit token value")
+        })
+
+        it("permission should be invalid if you don't have enough money", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(10000000)
+
+            const permissionValue = BigNumber.from("100000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("You should have enough to give the permission")
+        })
+
+        it("payment should be complete units", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(100000000)
+
+            const permissionValue = BigNumber.from("10304403");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("Payment should be complete units")
+        })
+
+        it("payment should be available", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC,
+                totalSupply
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            const wholeSupplyMoney = totalSupply * 2 * 10 * Math.pow(10, await fakeUSDC.decimals());
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(wholeSupplyMoney)
+
+            const permissionValue = BigNumber.from(wholeSupplyMoney.toString());
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("You can't buy more than available")
+        })
+
+        it("buy it all and then buy it more", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC,
+                totalSupply
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            const wholeSupplyMoney = totalSupply * 10 * Math.pow(10, await fakeUSDC.decimals());
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(wholeSupplyMoney)
+
+            const permissionValue = BigNumber.from(wholeSupplyMoney.toString());
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address)
+
+            expect(await fiduciaryDuty.balanceOf(fiduciaryDuty.address))
+                .to
+                .equal(0);
+
+            expect(await fiduciaryDuty.balanceOf(otherAccount.address))
+                .to
+                .equal(totalSupply);
+
+            expect(await fiduciaryDuty.sold())
+                .to
+                .equal(totalSupply);
+
+            expect(await fiduciaryDuty.viablePoint())
+                .to
+                .equal(true);
+
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("You can't buy more than available")
+
+        })
+
+        it("test set viable point after minimal raise goal", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+                fakeUSDC,
+                minimalPoint,
+                totalSupply
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address)
+
+            const wholeSupplyMoneyUSDC = totalSupply * 10 * Math.pow(10, await fakeUSDC.decimals());
+
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(wholeSupplyMoneyUSDC)
+
+            const amountBeforeMinimalPoint = Math.floor(totalSupply * (minimalPoint - 1) / 100) * 10 * Math.pow(10, await fakeUSDC.decimals());
+
+            const permissionValue = BigNumber.from(amountBeforeMinimalPoint);
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissionFirstAmount = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await fiduciaryDuty.connect(otherAccount).addForPayment(permissionFirstAmount, otherAccount.address)
+
+            expect(await fiduciaryDuty.viablePoint())
+                .to
+                .equal(false);
+
+            const amountAfterMinimumPoint = Math.floor(totalSupply * (100 - (minimalPoint + 1)) / 100) * 10 * Math.pow(10, await fakeUSDC.decimals());
+
+            const permissionSecondAmount = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                BigNumber.from(amountAfterMinimumPoint),
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await fiduciaryDuty.connect(otherAccount).addForPayment(permissionSecondAmount, otherAccount.address)
+
+            expect(await fiduciaryDuty.viablePoint())
+                .to
+                .equal(true);
+
+        })
+
+        it("sender of the transaction should be whitelisted", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+            } = await loadFixture(deployFiduciaryDuty);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(100000000)
+            const permissionValue = BigNumber.from("1000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await expect(fiduciaryDuty.connect(otherAccount).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("Sender of transaction should be whitelisted")
+        })
+
+        it("Beneficiary should be whitelisted", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                deployer
+            } = await loadFixture(deployFiduciaryDuty);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(100000000)
+            const permissionValue = BigNumber.from("1000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await expect(fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address))
+                .to
+                .be
+                .revertedWith("Beneficiary should be whitelisted")
+        })
+
+        it("sender can be everyone", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                deployer,
+                whiteList
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(100000000)
+            const permissionValue = BigNumber.from("10000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            expect(await fiduciaryDuty.balanceOf(otherAccount.address))
+                .to
+                .equal(1);
+            expect(await fiduciaryDuty.balanceOf(deployer.address))
+                .to
+                .equal(0);
+        })
+
+
+        it("Cancel raise can only be called from owner", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+            } = await loadFixture(deployFiduciaryDuty);
+
+            await expect(fiduciaryDuty.connect(otherAccount).cancelRaise())
+                .to
+                .be
+                .revertedWith("Ownable: caller is not the owner")
+
+            await expect(fiduciaryDuty.canceledRaise())
+                .not
+                .to
+                .be
+                .reverted;
+        })
+    })
+
+    describe("Test withdrawal flows", () => {
+        it("user can withdraw", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+                totalSupply
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(1000000000)
+            const permissionValue = BigNumber.from("100000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            expect(await fiduciaryDuty.balanceOf(fiduciaryDuty.address))
+                .to
+                .equal(totalSupply);
+            expect(await fiduciaryDuty.sold())
+                .to
+                .equal(0);
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            expect(await fiduciaryDuty.balanceOf(otherAccount.address))
+                .to
+                .equal(10);
+            expect(await fiduciaryDuty.balanceOf(deployer.address))
+                .to
+                .equal(0);
+            expect(await fiduciaryDuty.balanceOf(fiduciaryDuty.address))
+                .to
+                .equal(totalSupply - 10);
+            expect(await fiduciaryDuty.sold())
+                .to
+                .equal(10);
+            await fiduciaryDuty.connect(otherAccount).withdrawPayment();
+            expect(await fiduciaryDuty.balanceOf(otherAccount.address))
+                .to
+                .equal(0)
+            expect(await fiduciaryDuty.balanceOf(fiduciaryDuty.address))
+                .to
+                .equal(totalSupply);
+            expect(await fiduciaryDuty.sold())
+                .to
+                .equal(0);
+        })
+
+        it("you shouldn't be able to withdraw when you don't have anything", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                whiteList,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            await expect(fiduciaryDuty.connect(otherAccount).withdrawPayment())
+                .to
+                .revertedWith("Your balance should be greater than 0 for refund")
+        })
+
+        it("withdraw should emit event", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(1000000000)
+            const permissionValue = BigNumber.from("100000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            expect(fiduciaryDuty.connect(otherAccount).withdrawPayment())
+                .to
+                .emit(fiduciaryDuty, "PaymentWithdraw")
+                .withArgs(otherAccount.address, 10);
+        })
+
+        it("should be able to add more payments after viable point", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(80000000000000)
+            const permissionValue = BigNumber.from("8000000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+
+            const permissionsAfterViablePoint = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                BigNumber.from("1000000000"),
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissionsAfterViablePoint, otherAccount.address)
+            await expect(fakeUSDC.transferWithAuthorization)
+                .to
+                .have
+                .callCount(2);
+        })
+
+        it("unable to withdraw after viable point", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(80000000000000)
+            const permissionValue = BigNumber.from("8000000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            await expect(fiduciaryDuty.connect(otherAccount).withdrawPayment())
+                .to
+                .be
+                .revertedWith("The viable point was already reached")
+        })
+
+        it("viable point shouldn't matter if canceled", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(80000000000000)
+            const permissionValue = BigNumber.from("10000000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            expect(await fiduciaryDuty.viablePoint())
+                .to
+                .equal(true);
+            await expect(fiduciaryDuty.connect(otherAccount).withdrawPayment())
+                .to
+                .be
+                .revertedWith("The viable point was already reached")
+
+            expect(await fiduciaryDuty.canceledRaise())
+                .to
+                .equal(false);
+
+            await fiduciaryDuty.cancelRaise();
+
+            expect(await fiduciaryDuty.canceledRaise())
+                .to
+                .equal(true);
+
+            await fiduciaryDuty.connect(otherAccount).withdrawPayment()
+
+            expect(await fiduciaryDuty.sold())
+                .to
+                .equal(0);
+        })
+
+        it("withdraw can only be done from whitelisted address", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+            } = await loadFixture(deployFiduciaryDuty);
+
+            expect(fiduciaryDuty.connect(otherAccount).withdrawPayment())
+                .to
+                .be
+                .revertedWith("Sender of transaction should be whitelisted");
+        })
+
+
+    })
+
+
+    describe("Test withdrawForDuty", () => {
+        it("should only be callable by owner", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+            } = await loadFixture(deployFiduciaryDuty);
+            await expect(fiduciaryDuty.connect(otherAccount).withdrawForDuty())
+                .to
+                .be
+                .revertedWith("Ownable: caller is not the owner")
+        })
+
+        it("should only be callable by owner", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+            } = await loadFixture(deployFiduciaryDuty);
+            await expect(fiduciaryDuty.connect(otherAccount).withdrawForDuty())
+                .to
+                .be
+                .revertedWith("Ownable: caller is not the owner")
+        })
+
+        it("should only be callable after viable point", async () => {
+            const {
+                fiduciaryDuty,
+            } = await loadFixture(deployFiduciaryDuty);
+            await expect(fiduciaryDuty.withdrawForDuty())
+                .to
+                .be
+                .revertedWith("The viable point is not reached yet")
+        })
+
+        it("viable point allow me to withdraw", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+                manager,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(80000000000000)
+            fakeUSDC.balanceOf.whenCalledWith(fiduciaryDuty.address)
+                .returns(8000000000);
+            const permissionValue = BigNumber.from("8000000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            await fiduciaryDuty.withdrawForDuty();
+            expect(fakeUSDC.balanceOf).to.have.been.called;
+            expect(fakeUSDC.transfer).to.have.been.calledWith(manager.address, 8000000000)
+        })
+
+        it("canceled raise should not allow to withdraw", async () => {
+            const {
+                fiduciaryDuty,
+                otherAccount,
+                fakeUSDC,
+                whiteList,
+                deployer,
+                manager,
+            } = await loadFixture(deployFiduciaryDuty);
+            await whiteList.addAddress(otherAccount.address);
+            fakeUSDC.balanceOf.whenCalledWith(otherAccount.address)
+                .returns(80000000000000)
+            fakeUSDC.balanceOf.whenCalledWith(fiduciaryDuty.address)
+                .returns(8000000000);
+            const permissionValue = BigNumber.from("8000000000");
+            const timeValidAfter = BigNumber.from("200000");
+            const timeValidBefore = BigNumber.from("100000");
+            const nonce = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is a test")), 32);
+            const v = BigNumber.from("28");
+            const r = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is r")), 32);
+            const s = ethers.utils.hexZeroPad(ethers.utils.hexlify(ethers.utils.toUtf8Bytes("This is s")), 32);
+            const permissions = createPermissionStructure(
+                otherAccount.address,
+                fiduciaryDuty.address,
+                permissionValue,
+                timeValidAfter,
+                timeValidBefore,
+                nonce,
+                v,
+                r,
+                s,
+            )
+            await fiduciaryDuty.connect(deployer).addForPayment(permissions, otherAccount.address)
+            await fiduciaryDuty.cancelRaise();
+            await expect(fiduciaryDuty.withdrawForDuty())
+                .to
+                .be
+                .revertedWith("The raise was canceled. Not allowed to get funds");
+        })
+    })
+
+
+});
